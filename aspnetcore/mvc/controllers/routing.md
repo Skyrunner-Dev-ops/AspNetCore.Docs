@@ -632,6 +632,93 @@ The `NamespaceRoutingConvention` can also be applied as an attribute on a contro
 
 [!code-csharp[](routing/samples/6.x/nsrc/Controllers/TestController.cs?name=snippet&highlight=1)]
 
+<a name="dynamic-routing"></a>
+
+## Dynamic controller routing with DynamicRouteValueTransformer
+
+ASP.NET Core supports dynamic routing to controllers and Razor Pages using <xref:Microsoft.AspNetCore.Mvc.Routing.DynamicRouteValueTransformer>. `DynamicRouteValueTransformer` allows an app to dynamically determine the controller, action, or route values of an incoming request at runtime. This is useful for scenarios such as:
+
+* CMS applications where URLs and page paths are stored in a database.
+* Localization where URL path segments dynamically translate to specific controllers or actions.
+* Multi-tenant applications where routes are dynamically mapped based on request headers or hostnames.
+
+To implement dynamic routing:
+
+1. Create a class that derives from <xref:Microsoft.AspNetCore.Mvc.Routing.DynamicRouteValueTransformer>.
+2. Override <xref:Microsoft.AspNetCore.Mvc.Routing.DynamicRouteValueTransformer.TransformAsync%2A> to inspect the incoming request and populate a <xref:Microsoft.AspNetCore.Routing.RouteValueDictionary> containing the target `controller`, `action`, or other route values.
+3. Register the transformer implementation in the dependency injection (DI) container.
+4. Map the dynamic route using <xref:Microsoft.AspNetCore.Builder.ControllerEndpointRouteBuilderExtensions.MapDynamicControllerRoute%2A> in `Program.cs`.
+
+### Example
+
+The following example demonstrates a custom `DynamicRouteValueTransformer` that looks up dynamic slug values (such as `/blog/my-first-post` or `/products/widget`) to determine the target controller and action:
+
+```csharp
+using Microsoft.AspNetCore.Mvc.Routing;
+using Microsoft.AspNetCore.Routing;
+
+public class CustomSlugTransformer : DynamicRouteValueTransformer
+{
+    private readonly ISlugService _slugService;
+
+    public CustomSlugTransformer(ISlugService slugService)
+    {
+        _slugService = slugService;
+    }
+
+    public override async ValueTask<RouteValueDictionary> TransformAsync(
+        HttpContext httpContext, RouteValueDictionary values)
+    {
+        if (!values.TryGetValue("slug", out var slugValue) || slugValue is not string slug)
+        {
+            return values;
+        }
+
+        // Dynamically resolve target controller and action based on the slug
+        var routeDestination = await _slugService.TranslateSlugAsync(slug);
+
+        if (routeDestination is null)
+        {
+            // Returning null causes routing to continue searching for other endpoint matches
+            return null!;
+        }
+
+        return new RouteValueDictionary
+        {
+            { "controller", routeDestination.Controller },
+            { "action", routeDestination.Action },
+            { "id", routeDestination.Id }
+        };
+    }
+}
+```
+
+Register the transformer in `Program.cs` and map the dynamic route using `MapDynamicControllerRoute`:
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddControllersWithViews();
+builder.Services.AddScoped<ISlugService, SlugService>();
+builder.Services.AddScoped<CustomSlugTransformer>();
+
+var app = builder.Build();
+
+app.UseRouting();
+
+// Map dynamic controller routes using the custom transformer
+app.MapDynamicControllerRoute<CustomSlugTransformer>("{**slug}");
+
+app.MapDefaultControllerRoute();
+
+app.Run();
+```
+
+> [!NOTE]
+> * Returning `null` from `TransformAsync` indicates that the dynamic transformer did not match the request, allowing routing to evaluate other endpoints.
+> * `DynamicRouteValueTransformer` instances can be registered as `Transient`, `Scoped`, or `Singleton` in DI.
+> * Overloads of <xref:Microsoft.AspNetCore.Builder.ControllerEndpointRouteBuilderExtensions.MapDynamicControllerRoute%2A> accept a `state` object parameter, allowing configuration state to be passed to the transformer instance.
+
 <a name="routing-mixed-ref-label"></a>
 
 ## Mixed routing: Attribute routing vs conventional routing
